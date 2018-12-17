@@ -9,6 +9,6 @@ Try to get all of the possible points!
 Open hamster.html in a browser of your choice.
 
 # Dependencies:
-Three.js
-basil.glb
+Three.js,
+basil.glb,
 humble.mp3 (30 second sample of Humble by Kendrick Lamar)
