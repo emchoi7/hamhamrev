@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Ham Ham Revolution!</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			#overlay {
+				position: absolute;
+				z-index: 1;
+				top: 100;
+				left: 100;
+				width: 25%;
+				height:25%;
+				opacity: 0.6;
+				background-color: #000000;
+				color: #ffffff;
+				text-align: center;
+			}
+			#container {
+				width: 200px;
+				height: 200px;
+			}
+			#desc {
+				text-align: center;
+				padding: 5%;
+			}
+			#startbutton {
+				text-align: center;
+			}
+			#dir {
+				text-align:center;
+				padding: 5%;
+			}
+
+		</style>
+	</head>
+	<body>
+		<div id="overlay">
+			<!-- start button and fade into -->
+			<div>
+				<p id="desc">
+					This is where you will see the directions according to the beat. 
+					<br />
+					Press start when you're ready.
+					<br />
+				</p>
+			</div>
+			<div id="startbutton">
+				<button id="start">Start!</button>
+			</div>
+			<div id="dir">
+			</div>
+		</div>
+		<div id="container">
+		</div>
+		<script src="three.js-master/build/three.js"></script>
+
+		<script src="three.js-master/examples/js/loaders/GLTFLoader.js"></script>
+
+		<script src="three.js-master/examples/js/WebGL.js"></script>
+		<script src="three.js-master/examples/js/libs/stats.min.js"></script>
+		<script src="three.js-master/examples/js/libs/dat.gui.min.js"></script>
+
+		<script>
+			if ( WEBGL.isWebGLAvailable() === false ) {
+
+				document.body.appendChild( WEBGL.getWebGLErrorMessage() );
+
+			}
+
+			var container, stats, clock, mixer, animations, actions, activeAction, previousAction, currKey;
+			var camera, scene, renderer, model, face, listener, sound, audioLoader, directions;
+
+			var moves = ['Left', 'Right', 'Up', 'Down', 'Jump']
+
+			// Music / Game info //
+			var beatsArray = [];
+			var movesArray = [];
+			var score, totscore;
+			var currBeat, nextBeat, currMove, currTime;
+			var started = false;
+			var ended = false;
+
+			init();
+			animate();
+			
+
+			function init() {
+				var overlay = document.getElementById("overlay");
+				container = document.getElementById("container");
+				directions = document.getElementById("dir");
+				
+				// camera
+
+				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.25, 100 );
+				camera.position.set( -3, 3, 5 );
+				camera.lookAt( new THREE.Vector3( -1, 0, -0.5 ) );
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0xffffff );
+
+				//audio
+				listener = new THREE.AudioListener();
+				camera.add( listener );
+				// create a global audio source
+				sound = new THREE.Audio( listener );
+
+
+				//clock
+
+				clock = new THREE.Clock();
+
+				// lights
+
+				var light = new THREE.HemisphereLight( 0xffffff, 0x444444 );
+				light.position.set( 0, 20, 0 );
+				scene.add( light );
+
+				light = new THREE.DirectionalLight( 0xffffff );
+				light.position.set( 0, 20, 10 );
+				scene.add( light );
+
+				// ground
+
+				var mesh = new THREE.Mesh( new THREE.PlaneBufferGeometry( 2000, 2000 ), new THREE.MeshPhongMaterial( { color: 0x4dff4d, depthWrite: false } ) );
+				mesh.rotation.x = - Math.PI / 2;
+				scene.add( mesh );
+
+				var grid = new THREE.GridHelper( 100, 40, 0x000000, 0x000000 );
+				grid.material.opacity = 0.2;
+				grid.material.transparent = true;
+				scene.add( grid );
+
+				// model
+
+				var loader = new THREE.GLTFLoader();
+				loader.load( 'basil.glb', function( gltf ) {
+					model = gltf.scene;
+					scene.add( model );
+					animations = gltf.animations;
+					setUpAnimations(model, gltf.animations, container);
+
+
+				}, undefined, function( e ) {
+
+					console.error( e );
+
+				} );
+
+				// window config
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				console.log(window.innerWidth, window.innerHeight)
+				var ratio = window.innerWidth / window.innerHeight;
+				renderer.setSize( 1050, 1050*(1/ratio));
+				renderer.gammaOutput = true;
+				renderer.gammaFactor = 2.2;
+				container.appendChild( renderer.domElement );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				
+				// init game
+				initGame();
+			}
+
+			function setUpAnimations(model, animations, container) {
+				// animation
+				mixer = new THREE.AnimationMixer( model );
+				actions = {}; //contains all animation clips
+
+				for ( var i = 0; i < animations.length; i++ ) {
+
+					var clip = animations[ i ];
+					var action = mixer.clipAction( clip );
+					actions[ clip.name ] = action;
+
+					if ( moves.indexOf( clip.name ) >= 0 ) {
+
+						action.clampWhenFinished = false;
+						action.loop = THREE.LoopOnce;
+						action.timeScale = 2;
+
+					}
+
+				}
+				activeAction = actions['Resting'];
+				activeAction.play();
+
+				function fadeToAction(name, duration, activeAction) {
+					previousAction = activeAction;
+					activeAction = actions[name];
+					if (previousAction != activeAction ) {
+						previousAction.fadeOut( duration );
+					}
+					activeAction
+						.reset()
+						.setEffectiveTimeScale( actions[name].timeScale )
+						.setEffectiveWeight( 1 )
+						.fadeIn( duration )
+						.play();
+
+				}
+
+				function triggerMove(e) {
+					currKey = e.key;
+					currTime = clock.elapsedTime;
+					if( e.key == ' ' ) { //space
+						fadeToAction('Jump', 0.01, activeAction);
+						mixer.addEventListener( 'finished', restoreState );
+					} else if( e.key == 'ArrowDown' ) { //arrowdown
+						fadeToAction('Down', 0.01, activeAction);
+						mixer.addEventListener( 'finished', restoreState );
+					} else if( e.key == 'ArrowLeft' ) { //arrowleft
+						fadeToAction('Left', 0.01, activeAction);
+						mixer.addEventListener( 'finished', restoreState );
+					} else if( e.key == 'ArrowRight' ) { //arrowright
+						fadeToAction('Right', 0.01, activeAction);
+						mixer.addEventListener( 'finished', restoreState );
+					} else if( e.key == 'ArrowUp' ) { //arrowup
+						fadeToAction('Up', 0.01, activeAction);
+						mixer.addEventListener( 'finished', restoreState );
+					}
+				}
+				function restoreState() {
+				mixer.removeEventListener( 'finished', restoreState );
+
+				fadeToAction( 'Resting', 0.01, activeAction );
+			}
+				window.addEventListener( "keydown", triggerMove );
+				// default action
+				
+			}
+
+			function initGame() { // set up game components
+				beatsArray = [    1.20743764,  2.02013605,
+								  3.20435374,  4.80653061,   
+								  5.61922902,  6.40870748,
+								  7.19818594,  8.82358277,
+								  10.40253968, 11.19201814,
+								 12.79419501, 13.60689342,
+								 15.99854875, 16.78802721,  
+								 17.60072562, 18.41342404,
+								 19.99238095, 20.82829932,
+								 22.43047619, 23.19673469,
+								 24.79891156, 25.61160998,
+								 27.21378685, 28.00326531,
+								 29.60544218 ].reverse()
+				// set up moves & beats & audio
+				var min=0; 
+    			var max=moves.length;  
+    			var random; 
+				for( i = 0; i < beatsArray.length; i++ ){
+					random = Math.floor(Math.random() * (+max - +min)) + +min;
+					movesArray.push(moves[random])
+				}
+				console.log(movesArray);
+				// load a sound and set it as the Audio object's buffer
+				audioLoader = new THREE.AudioLoader();
+				totscore = beatsArray.length;
+				nextBeat = beatsArray.pop();
+				var startButton = document.getElementById("start");
+				startButton.addEventListener( 'click', startGame );
+				
+			}
+
+			function startGame() { // after press start
+				var startButton = document.getElementById("start");
+				startButton.remove()
+				var desc = document.getElementById("desc");
+				desc.remove()
+				
+
+				// Reset clock & score
+				score = 0;
+				currKey = 1;
+				// play audio
+				audioLoader.load( 'humble.mp3', function( buffer ) {
+					sound.setBuffer( buffer );
+					sound.setLoop( false );
+					sound.setVolume( 0.5 );
+					sound.play();
+				});
+				
+				started = true;
+				clock.stop();
+				clock.start();
+			}
+
+			function endGame() {
+				// display result
+				var result = score / totscore;
+				if ( result >= 0.9 ) {
+					directions.innerHTML = "You got an A!" + "<br>Awesome Pawsome!"
+				} else if ( result >= 0.8 ) {
+					directions.innerHTML = "You got a B!" + "<br>Better Luck Next Time!"
+				} else if ( result >= 0.7 ) {
+					directions.innerHTML = "You got a C!" + "<br>C's get Degrees!"
+				} else if ( result >= 0.6 ) {
+					directions.innerHTML = "You got a D!" + "<br>Don't give up!"
+				} else if ( result >= 0) {
+					directions.innerHTML = "You got an F!" + "<br>...Hope you had fun at least!"
+				}
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			function animate() {
+				var dt = clock.getDelta();
+
+				if ( mixer ) mixer.update( dt );
+
+				requestAnimationFrame( animate );
+
+				renderer.render( scene, camera );
+
+				//game 
+				if ( started ) {
+					
+					// until beats array is empty:
+					if( beatsArray.length != 0 ) {
+						if(currKey == 1) {
+							currKey = 0;
+							currBeat = nextBeat;
+							nextBeat = beatsArray.pop();
+							currMove = movesArray.pop();
+							directions.innerHTML = "";
+							
+						}
+						
+						//display blank on div
+						if( clock.elapsedTime >= currBeat - .5 ) {   //wait till time range
+							if(currMove === "Up") {
+								directions.innerHTML = "↑";
+							} else if(currMove === "Down") {
+								directions.innerHTML = "↓";
+							} else if(currMove === "Left") {
+								directions.innerHTML = "←";
+							} else if(currMove === "Right") {
+								directions.innerHTML = "→";
+							} else if(currMove === "Jump") {
+								directions.innerHTML = "[ space ]";
+							}
+							
+							//display move on div
+							if( clock.elapsedTime > currBeat + .5 ) { currKey=1; } //if time passed, move on
+							if( currKey === 1 ) {
+								console.log(currKey)
+								if( currKey === currMove ) {
+									//calculate how on-time it was
+									score += 1 
+									
+								} else {
+									score += 0.5
+								}
+								console.log(score);
+								currKey = 1;
+							}
+						} // else, keep counting
+						
+					} else { //nothing left in beats array
+						started = false;
+						ended = true; //trigger result elsewhere
+						
+					}
+					
+				}
+				if ( ended ) {
+					endGame();
+					ended = false;
+				}
+			}
+
+		</script>
+	</body>
+</html>
